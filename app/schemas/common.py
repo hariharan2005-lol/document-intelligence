@@ -1,0 +1,38 @@
+"""Common data types and API response schemas."""
+from datetime import datetime
+from enum import Enum
+from typing import Any, Dict, List, Optional
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class DocumentType(str, Enum):
+    INVOICE = "invoice"
+    RESUME = "resume"
+    UNKNOWN = "unknown"
+
+
+class DocumentStatus(str, Enum):
+    PROCESSED = "processed"
+    FAILED = "failed"
+
+
+class DocumentResponse(BaseModel):
+    """Response payload for a single document."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    filename: str
+    file_type: str
+    doc_type: DocumentType
+    status: DocumentStatus
+    raw_text: Optional[str] = None
+    structured_data: Optional[Dict[str, Any]] = None
+    processing_meta: Optional[Dict[str, Any]] = None
+    created_at: datetime
+    error_message: Optional[str] = None
+
+
+class DocumentSearchResult(BaseModel):
+    """Search query response list item."""
+    total: int
+    results: List[DocumentResponse]

@@ -1,0 +1,276 @@
+"""End-to-end integration tests for Document Intelligence API endpoints."""
+import pytest
+
+
+def test_upload_invoice_pdf_and_retrieve(client, fixtures_path):
+    """Test full pipeline: POST invoice PDF -> GET /documents/{id} -> assert schema fields."""
+    invoice_path = fixtures_path / "sample_invoice.pdf"
+    with open(invoice_path, "rb") as f:
+        response = client.post(
+            "/documents",
+            files={"file": ("sample_invoice.pdf", f, "application/pdf")}
+        )
+
+    assert response.status_code == 201, response.text
+    data = response.json()
+
+    # Verify root fields
+    doc_id = data["id"]
+    assert doc_id is not None
+    assert data["filename"] == "sample_invoice.pdf"
+    assert data["file_type"] == "application/pdf"
+    assert data["doc_type"] == "invoice"
+    assert data["status"] == "processed"
+    assert "Acme Solutions" in data["raw_text"]
+
+    # Verify structured fields against Invoice schema
+    structured = data["structured_data"]
+    assert structured is not None
+    assert "company_name" in structured
+    assert structured["invoice_number"] == "INV-2024-8842"
+    assert structured["amount"] == 4500.00
+    assert structured["date"] == "2024-03-15"
+    assert structured["currency"] == "USD"
+
+    # Verify GET /documents/{id}
+    get_resp = client.get(f"/documents/{doc_id}")
+    assert get_resp.status_code == 200
+    get_data = get_resp.json()
+    assert get_data["id"] == doc_id
+    assert get_data["structured_data"]["invoice_number"] == "INV-2024-8842"
+
+
+def test_upload_resume_pdf_and_retrieve(client, fixtures_path):
+    """Test full pipeline: POST resume PDF -> GET /documents/{id} -> assert schema fields."""
+    resume_path = fixtures_path / "sample_resume.pdf"
+    with open(resume_path, "rb") as f:
+        response = client.post(
+            "/documents",
+            files={"file": ("sample_resume.pdf", f, "application/pdf")}
+        )
+
+    assert response.status_code == 201, response.text
+    data = response.json()
+
+    doc_id = data["id"]
+    assert data["filename"] == "sample_resume.pdf"
+    assert data["doc_type"] == "resume"
+    assert data["status"] == "processed"
+
+    # Verify structured fields against Resume schema
+    structured = data["structured_data"]
+    assert structured is not None
+    assert "Alex Mercer" in structured["name"]
+    assert "alex.mercer@devmail.com" in structured["email"]
+
+    # Verify skills list
+    skills = structured["skills"]
+    assert isinstance(skills, list)
+    assert any("Python" in s for s in skills)
+    assert any("FastAPI" in s for s in skills)
+    assert any("Flask" in s for s in skills)
+
+    # Verify education and experience lists
+    assert len(structured["education"]) >= 1
+    assert len(structured["experience"]) >= 1
+
+
+def test_upload_docx_files(client, fixtures_path):
+    """Test DOCX ingestion for both resume and invoice."""
+    # 1. Invoice DOCX
+    with open(fixtures_path / "sample_invoice.docx", "rb") as f:
+        inv_resp = client.post(
+            "/documents",
+            files={"file": ("sample_invoice.docx", f, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
+        )
+    assert inv_resp.status_code == 201
+    assert inv_resp.json()["doc_type"] == "invoice"
+
+    # 2. Resume DOCX
+    with open(fixtures_path / "sample_resume.docx", "rb") as f:
+        res_resp = client.post(
+            "/documents",
+            files={"file": ("sample_resume.docx", f, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
+        )
+    assert res_resp.status_code == 201
+    assert res_resp.json()["doc_type"] == "resume"
+
+
+def test_search_candidates_by_skills(client, fixtures_path):
+    """Test candidate querying e.g. 'find candidates who know Python and Flask'."""
+    # Ingest resume
+    with open(fixtures_path / "sample_resume.pdf", "rb") as f:
+        client.post("/documents", files={"file": ("sample_resume.pdf", f, "application/pdf")})
+
+    # Search for Python and Flask
+    resp = client.get("/documents/search", params={"doc_type": "resume", "skill": "Python,Flask"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] >= 1
+    matched = data["results"][0]
+    assert matched["doc_type"] == "resume"
+    assert "Alex Mercer" in matched["structured_data"]["name"]
+
+    # Search for a non-existent skill
+    empty_resp = client.get("/documents/search", params={"doc_type": "resume", "skill": "Cobol,Fortran"})
+    assert empty_resp.status_code == 200
+    assert empty_resp.json()["total"] == 0
+
+
+def test_search_invoices_by_amount_and_date(client, fixtures_path):
+    """Test invoice querying by date range and amount."""
+    with open(fixtures_path / "sample_invoice.pdf", "rb") as f:
+        client.post("/documents", files={"file": ("sample_invoice.pdf", f, "application/pdf")})
+
+    # Query matching amount range ($4000 - $5000)
+    resp = client.get(
+        "/documents/search",
+        params={"doc_type": "invoice", "min_amount": 4000.0, "max_amount": 5000.0}
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] >= 1
+    assert data["results"][0]["structured_data"]["amount"] == 4500.00
+
+    # Query matching date range (2024-01-01 to 2024-03-31)
+    date_resp = client.get(
+        "/documents/search",
+        params={"doc_type": "invoice", "date_from": "2024-01-01", "date_to": "2024-03-31"}
+    )
+    assert date_resp.status_code == 200
+    assert date_resp.json()["total"] >= 1
+
+    # Query non-matching amount range ($100 - $500)
+    no_match_resp = client.get(
+        "/documents/search",
+        params={"doc_type": "invoice", "min_amount": 100.0, "max_amount": 500.0}
+    )
+    assert no_match_resp.status_code == 200
+    assert no_match_resp.json()["total"] == 0
+
+
+def test_reject_unsupported_file_upload(client):
+    """Test rejection of unsupported file types."""
+    response = client.post(
+        "/documents",
+        files={"file": ("bad.exe", b"MZ\x90\x00corrupt executable", "application/octet-stream")}
+    )
+    assert response.status_code == 400
+    assert "Unsupported or unrecognized file format" in response.json()["detail"]
+
+
+def test_get_nonexistent_document(client):
+    """Test 404 for invalid document ID."""
+    response = client.get("/documents/00000000-0000-0000-0000-000000000000")
+    assert response.status_code == 404
+
+
+def test_upload_image_file(client, fixtures_path):
+    """Test image upload through the pipeline."""
+    with open(fixtures_path / "sample_invoice.png", "rb") as f:
+        resp = client.post(
+            "/documents",
+            files={"file": ("sample_invoice.png", f, "image/png")}
+        )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["filename"] == "sample_invoice.png"
+    assert data["file_type"] == "image/png"
+    assert data["status"] in ("processed", "failed")
+
+
+def test_upload_invoice_with_alternative_labels_and_search(client, fixtures_path):
+    """Test invoice with alternative labels (Ref No, DD-Mon-YYYY, Grand Total) through full pipeline and search."""
+    pdf_path = fixtures_path / "sample_invoice_variant.pdf"
+    with open(pdf_path, "rb") as f:
+        resp = client.post(
+            "/documents",
+            files={"file": ("sample_invoice_variant.pdf", f, "application/pdf")}
+        )
+
+    assert resp.status_code == 201, resp.text
+    data = resp.json()
+    assert data["doc_type"] == "invoice"
+    assert data["status"] == "processed"
+
+    # Confirm extracted values are real values, not hardcoded defaults
+    structured = data["structured_data"]
+    assert structured["invoice_number"] == "NM-77821"
+    assert structured["date"] == "2026-09-02"
+    assert structured["amount"] == 12340.50
+    assert structured["company_name"] == "Northwind Traders"
+    assert structured["customer_name"] == "Contoso Ltd"
+    assert structured["currency"] == "USD"
+
+    # Confirm provider and model are explicitly surfaced in metadata
+    meta = data["processing_meta"]
+    assert "extraction" in meta
+    assert "openai" in meta["extraction"]["llm_provider"]
+    assert meta["extraction"]["llm_model"] == "gpt-4o-mini"
+    assert meta["extraction"]["fallback_used"] is True
+
+    # Confirm searchable by amount ($10,000 - $15,000)
+    search_amt = client.get(
+        "/documents/search",
+        params={"doc_type": "invoice", "min_amount": 10000.0, "max_amount": 15000.0}
+    )
+    assert search_amt.status_code == 200
+    assert search_amt.json()["total"] >= 1
+    assert any(doc["structured_data"]["invoice_number"] == "NM-77821" for doc in search_amt.json()["results"])
+
+    # Confirm searchable by company and date range
+    search_date = client.get(
+        "/documents/search",
+        params={
+            "doc_type": "invoice",
+            "company_name": "Northwind",
+            "date_from": "2026-01-01",
+            "date_to": "2026-12-31",
+        }
+    )
+    assert search_date.status_code == 200
+    assert search_date.json()["total"] >= 1
+    assert search_date.json()["results"][0]["structured_data"]["invoice_number"] == "NM-77821"
+
+
+def test_upload_with_live_llm_primary_path(client, fixtures_path, monkeypatch):
+    """Verify that when an LLM API key is configured, the primary real LLM path is called directly."""
+    import json
+    import httpx
+    from unittest.mock import patch, MagicMock
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", "sk-live-test-key")
+    monkeypatch.setattr(settings, "LLM_PROVIDER", "openai")
+
+    live_llm_json = {
+        "company_name": "Northwind Traders Inc",
+        "invoice_number": "NM-77821-LLM",
+        "date": "2026-09-02",
+        "customer_name": "Contoso Global Ltd",
+        "amount": 12340.50,
+        "currency": "USD"
+    }
+
+    with patch("app.llm.client.OpenAILLMClient._call_api", return_value=json.dumps(live_llm_json)):
+        with open(fixtures_path / "sample_invoice_variant.pdf", "rb") as f:
+            resp = client.post(
+                "/documents",
+                files={"file": ("sample_invoice_variant.pdf", f, "application/pdf")}
+            )
+
+    assert resp.status_code == 201
+    data = resp.json()
+
+    # Confirms live LLM extraction was used directly
+    assert data["structured_data"]["invoice_number"] == "NM-77821-LLM"
+    assert data["structured_data"]["company_name"] == "Northwind Traders Inc"
+
+    # Confirms primary provider metadata with NO fallback
+    meta = data["processing_meta"]["extraction"]
+    assert meta["llm_provider"] == "openai"
+    assert meta["llm_model"] == "gpt-4o-mini"
+    assert meta["fallback_used"] is False
+    assert meta["fallback_reason"] is None
+
+
