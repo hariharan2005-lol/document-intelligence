@@ -32,137 +32,215 @@ def clean_llm_json_response(raw_text: str) -> str:
 
 def parse_iso_date(text: str) -> str:
     """Extract and normalize a date string from arbitrary text into ISO 8601 (YYYY-MM-DD)."""
-    # 1. Look for explicit date labels first e.g. "Date: 02-Sep-2026", "Dated: Sep 02, 2026"
+    # Look for explicit date labels first
     label_match = re.search(
-        r'(?:date|dated|issue\s*date|billing\s*date|invoice\s*date|doc\s*date)\s*[:]?\s*([^\n\r]+)',
+        r'(?:date|dated|issue\s*date|billing\s*date|invoice\s*date|statement\s*date|doc\s*date|date\s*of\s*sale|date\s*issued|billing\s*period\s*start)\s*[:]?\s*([^\n\r]+)',
         text,
         re.IGNORECASE,
     )
-    search_scope = label_match.group(1) if label_match else text
+    search_scopes = []
+    if label_match:
+        search_scopes.append(label_match.group(1).strip())
+    search_scopes.append(text)
 
     month_names = 'jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec'
     full_months = 'january|february|march|april|may|june|july|august|september|october|november|december'
 
-    # Pattern A: DD-Mon-YYYY or DD/Mon/YYYY or DD Mon YYYY (e.g. "02-Sep-2026", "2 Sep 2026")
-    m = re.search(
-        r'\b(\d{1,2})[-/\s](' + month_names + '|' + full_months + r')[-/\s](\d{4})\b',
-        search_scope,
-        re.IGNORECASE,
-    )
-    if m:
-        try:
-            d, mon, y = m.group(1), m.group(2)[:3].title(), m.group(3)
-            dt = datetime.strptime(f"{int(d):02d}-{mon}-{y}", "%d-%b-%Y")
-            return dt.strftime("%Y-%m-%d")
-        except Exception:
-            pass
+    for scope in search_scopes:
+        # Pattern A: DD-Mon-YYYY or DD Mon YYYY or DD/Mon/YYYY (e.g. "02-Sep-2026", "21 Aug 2026")
+        m = re.search(
+            r'\b(\d{1,2})[-/\s](' + month_names + '|' + full_months + r')[-/\s](\d{4})\b',
+            scope,
+            re.IGNORECASE,
+        )
+        if m:
+            try:
+                d, mon, y = m.group(1), m.group(2)[:3].title(), m.group(3)
+                dt = datetime.strptime(f"{int(d):02d}-{mon}-{y}", "%d-%b-%Y")
+                return dt.strftime("%Y-%m-%d")
+            except Exception:
+                pass
 
-    # Pattern B: Mon DD, YYYY or Month DD, YYYY (e.g. "Sep 02, 2026", "September 2, 2026")
-    m = re.search(
-        r'\b(' + month_names + '|' + full_months + r')\s+(\d{1,2}),?\s+(\d{4})\b',
-        search_scope,
-        re.IGNORECASE,
-    )
-    if m:
-        try:
-            mon, d, y = m.group(1)[:3].title(), m.group(2), m.group(3)
-            dt = datetime.strptime(f"{int(d):02d}-{mon}-{y}", "%d-%b-%Y")
-            return dt.strftime("%Y-%m-%d")
-        except Exception:
-            pass
+        # Pattern B: Mon DD, YYYY or Month DD, YYYY (e.g. "Sep 03, 2026", "September 1, 2026")
+        m = re.search(
+            r'\b(' + month_names + '|' + full_months + r')\s+(\d{1,2}),?\s+(\d{4})\b',
+            scope,
+            re.IGNORECASE,
+        )
+        if m:
+            try:
+                mon, d, y = m.group(1)[:3].title(), m.group(2), m.group(3)
+                dt = datetime.strptime(f"{int(d):02d}-{mon}-{y}", "%d-%b-%Y")
+                return dt.strftime("%Y-%m-%d")
+            except Exception:
+                pass
 
-    # Pattern C: YYYY-MM-DD or YYYY/MM/DD (e.g. "2026-09-02")
-    m = re.search(r'\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b', search_scope)
-    if m:
-        try:
-            y, mon, d = m.group(1), int(m.group(2)), int(m.group(3))
-            if 1 <= mon <= 12 and 1 <= d <= 31:
-                return f"{y}-{mon:02d}-{d:02d}"
-        except Exception:
-            pass
+        # Pattern C: YYYY-MM-DD or YYYY.MM.DD or YYYY/MM/DD (e.g. "2026-09-02")
+        m = re.search(r'\b(\d{4})[-/\.](\d{1,2})[-/\.](\d{1,2})\b', scope)
+        if m:
+            try:
+                y, mon, d = m.group(1), int(m.group(2)), int(m.group(3))
+                if 1 <= mon <= 12 and 1 <= d <= 31:
+                    return f"{y}-{mon:02d}-{d:02d}"
+            except Exception:
+                pass
 
-    # Pattern D: DD/MM/YYYY or DD-MM-YYYY (e.g. "02/09/2026")
-    m = re.search(r'\b(\d{1,2})[-/](\d{1,2})[-/](\d{4})\b', search_scope)
-    if m:
-        try:
-            d, mon, y = int(m.group(1)), int(m.group(2)), m.group(3)
-            if 1 <= mon <= 12 and 1 <= d <= 31:
-                return f"{y}-{mon:02d}-{d:02d}"
-        except Exception:
-            pass
-
-    # Fallback to general text if label didn't yield a match
-    if label_match and search_scope != text:
-        return parse_iso_date(text)
+        # Pattern D: DD/MM/YYYY or DD.MM.YYYY or DD-MM-YYYY (e.g. "12.06.2026", "30/07/2026")
+        m = re.search(r'\b(\d{1,2})[-/\.](\d{1,2})[-/\.](\d{4})\b', scope)
+        if m:
+            try:
+                d, mon, y = int(m.group(1)), int(m.group(2)), m.group(3)
+                if mon > 12 and d <= 12:
+                    d, mon = mon, d
+                if 1 <= mon <= 12 and 1 <= d <= 31:
+                    return f"{y}-{mon:02d}-{d:02d}"
+            except Exception:
+                pass
 
     return "2024-01-15"
 
 
+
+INVALID_INVOICE_NUM_WORDS = {
+    "invoice", "invoices", "tax", "statement", "statements", "bill", "billing",
+    "receipt", "receipts", "order", "orders", "commercial", "proforma", "original",
+    "copy", "date", "dated", "number", "numbers", "due", "total", "amount", "usd",
+    "eur", "gbp", "jpy", "details", "summary", "page", "client", "customer", "vendor"
+}
+
+
 def parse_invoice_number(text: str) -> str:
-    """Extract invoice or reference number supporting varied labels (Invoice Number, Ref No, Doc #, etc.)."""
+    """Extract invoice or reference number supporting varied labels, avoiding slash/label collisions."""
+    # Pattern 1: Explicit labels with colon, hash, or number keywords
+    # e.g. "Invoice Number: INV-001", "Statement #: STMT-2026-901", "Ref No: MPL-9081", "Invoice / Ref No: MPL-9081"
     label_pattern = (
         r'(?:'
-        r'\b(?:invoice|inv|ref(?:erence)?|doc(?:ument)?|bill|order|receipt|statement|p\.?o\.?)\b'
-        r'\s*(?:no\.?|number|#|id|code)?\s*[:#]?\s*'
-        r')([A-Za-z0-9\-_/]+)'
+        r'(?:invoice|inv|statement|bill|ref(?:erence)?|doc(?:ument)?|receipt|order|p\.?o\.?)'
+        r'(?:\s*/\s*(?:invoice|inv|statement|bill|ref(?:erence)?|doc(?:ument)?|receipt|order|p\.?o\.?))*'
+        r'\s*(?:no\.?|number|#|id|code)?\s*[:#]\s*'
+        r'|\b(?:invoice|inv|statement|bill|ref(?:erence)?|doc(?:ument)?|receipt|order|p\.?o\.?)\s+'
+        r'(?:no\.?|number|#|id|code)\s*[:#]?\s*'
+        r')([A-Za-z0-9][A-Za-z0-9\-_/]*[A-Za-z0-9]|[A-Za-z0-9]+)'
     )
-    # Search line by line
+
+    ignore_headers = (
+        "INVOICE", "TAX INVOICE", "COMMERCIAL INVOICE", "BILL", "RECEIPT",
+        "STATEMENT", "BILLING STATEMENT", "PROFORMA INVOICE"
+    )
+
     for line in text.splitlines():
         line_clean = line.strip()
-        # Skip standalone header line like "INVOICE", "TAX INVOICE"
-        if line_clean.upper() in ("INVOICE", "TAX INVOICE", "BILL", "RECEIPT", "STATEMENT"):
+        if not line_clean:
             continue
-        m = re.search(label_pattern, line_clean, re.IGNORECASE)
-        if m:
-            candidate = m.group(1).strip()
-            if len(candidate) >= 2 and candidate.lower() not in (
-                "number", "no", "date", "to", "for", "of", "in", "by", "terms", "due"
+        # Skip standalone header lines and slash combinations like "TAX INVOICE / INVOICE"
+        clean_upper = line_clean.upper()
+        if any(clean_upper == h or clean_upper.startswith(h + " /") or clean_upper.startswith(h + "/") for h in ignore_headers):
+            # Check if there is also an explicit number on the same line, e.g. "TAX INVOICE / INVOICE No: 123"
+            if not re.search(r'[:#]\s*[A-Za-z0-9]', line_clean):
+                continue
+
+        # Try label match
+        for m in re.finditer(label_pattern, line_clean, re.IGNORECASE):
+            candidate = m.group(1).strip().strip("/-_")
+            cand_lower = candidate.lower()
+            if (
+                len(candidate) >= 2
+                and cand_lower not in INVALID_INVOICE_NUM_WORDS
+                and not cand_lower.startswith("invoice")
+                and not cand_lower.startswith("/invoice")
             ):
                 return candidate
 
-    # Pattern 2: Typical reference format like NM-77821, INV-2024-8842, REF-1092
-    code_match = re.search(r'\b([A-Z]{2,4}-[0-9]{4,8})\b', text)
+    # Pattern 2: Reference code pattern like MPL-9081, INV-2024-8842, STMT-2026-901, CI-2026-0045
+    code_match = re.search(r'\b([A-Z]{2,6}-[0-9A-Z]{3,10})\b', text)
     if code_match:
-        return code_match.group(1)
+        cand = code_match.group(1)
+        if cand.split("-")[0].lower() not in ("page", "date"):
+            return cand
+
+    # Pattern 3: Standalone "Statement #" or "Invoice #" where number follows
+    stmt_match = re.search(r'(?:statement|invoice|ref)\s*#\s*[:]?\s*([A-Za-z0-9\-_]+)', text, re.IGNORECASE)
+    if stmt_match:
+        cand = stmt_match.group(1).strip("/-_")
+        if cand.lower() not in INVALID_INVOICE_NUM_WORDS:
+            return cand
 
     return "INV-DEFAULT-001"
 
 
 def parse_invoice_amount(text: str) -> float:
-    """Extract numeric monetary amount due supporting varied labels (Grand Total, Net Payable, Total, Amount, etc.)."""
-    # 1. High priority labels: Grand Total, Net Payable, Total Due, Balance Due, etc.
-    primary_patterns = [
-        r'(?:grand\s*total|net\s*payable|total\s*(?:amount)?\s*(?:due)?|total\s*payable|balance\s*due|final\s*amount|amount\s*due|invoice\s*total)\s*[:]?\s*(?:[A-Z]{3}|[\$€£₹¥])?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})|[0-9]+\.[0-9]{2})',
-        r'(?:total|amount)\s*[:]?\s*(?:[A-Z]{3}|[\$€£₹¥])?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})|[0-9]+\.[0-9]{2})',
-    ]
-    for pat in primary_patterns:
-        matches = re.findall(pat, text, re.IGNORECASE)
-        if matches:
-            clean_str = matches[-1].replace(',', '')
+    """Extract numeric monetary amount due supporting varied labels, whole numbers (e.g. 890,000 JPY), and decimals."""
+    # 1. High priority labels: Amount Payable, Grand Total, Net Payable, Total Due, Balance Due, etc.
+    primary_label_pat = (
+        r'(?:'
+        r'grand\s*total|net\s*payable|amount\s*payable|total\s*payable|'
+        r'balance\s*(?:due|payable)|total\s*amount\s*(?:due|payable)?|'
+        r'amount\s*due|total\s*due|final\s*amount|invoice\s*total|statement\s*total'
+        r')\s*[:]?\s*(?:[A-Z]{3}|[\$€£₹¥])?\s*'
+        r'([0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]{1,2})?|[0-9]+\.[0-9]{1,2}|[0-9]{2,})'
+    )
+    matches = re.findall(primary_label_pat, text, re.IGNORECASE)
+    if matches:
+        for val in reversed(matches):
+            clean_str = val.replace(',', '')
             try:
-                return float(clean_str)
+                amt = float(clean_str)
+                if amt > 0:
+                    return amt
             except ValueError:
                 pass
 
-    # 2. Currency-prefixed or postfixed amounts (e.g. "$4,500.00", "12,340.50 USD")
-    curr_patterns = [
-        r'[\$€£₹¥]\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})|[0-9]+\.[0-9]{2})',
-        r'([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})|[0-9]+\.[0-9]{2})\s*(?:USD|EUR|GBP|INR|CAD|AUD)',
-    ]
-    for pat in curr_patterns:
-        matches = re.findall(pat, text, re.IGNORECASE)
-        if matches:
-            clean_str = matches[-1].replace(',', '')
+    # 2. General total / amount label: Total: X, Amount: X
+    sec_label_pat = (
+        r'(?:total|amount)\s*[:]?\s*(?:[A-Z]{3}|[\$€£₹¥])?\s*'
+        r'([0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]{1,2})?|[0-9]+\.[0-9]{1,2}|[0-9]{2,})'
+    )
+    matches = re.findall(sec_label_pat, text, re.IGNORECASE)
+    if matches:
+        for val in reversed(matches):
+            clean_str = val.replace(',', '')
             try:
-                return float(clean_str)
+                amt = float(clean_str)
+                if amt > 0:
+                    return amt
             except ValueError:
                 pass
 
-    # 3. Fallback: Find any decimal number with 2 decimal places and pick the maximum
-    all_floats = re.findall(r'\b([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})|[0-9]+\.[0-9]{2})\b', text)
-    if all_floats:
+    # 3. Currency-prefixed or postfixed amounts (e.g. "¥890,000", "890,000 JPY", "$4,500.00", "45,250.00 EUR")
+    curr_prefix_pat = (
+        r'[\$€£₹¥]\s*([0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]{1,2})?|[0-9]+\.[0-9]{1,2}|[0-9]{2,})'
+    )
+    matches = re.findall(curr_prefix_pat, text, re.IGNORECASE)
+    if matches:
+        for val in reversed(matches):
+            clean_str = val.replace(',', '')
+            try:
+                amt = float(clean_str)
+                if amt > 0:
+                    return amt
+            except ValueError:
+                pass
+
+    curr_postfix_pat = (
+        r'([0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]{1,2})?|[0-9]+\.[0-9]{1,2}|[0-9]{2,})\s*'
+        r'(?:USD|EUR|GBP|INR|JPY|CAD|AUD|CHF|CNY|SGD)'
+    )
+    matches = re.findall(curr_postfix_pat, text, re.IGNORECASE)
+    if matches:
+        for val in reversed(matches):
+            clean_str = val.replace(',', '')
+            try:
+                amt = float(clean_str)
+                if amt > 0:
+                    return amt
+            except ValueError:
+                pass
+
+    # 4. Fallback: Find any formatted number with comma thousands or decimals
+    all_nums = re.findall(r'\b([0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]{1,2})?|[0-9]+\.[0-9]{2})\b', text)
+    if all_nums:
         parsed = []
-        for s in all_floats:
+        for s in all_nums:
             try:
                 parsed.append(float(s.replace(',', '')))
             except ValueError:
@@ -179,22 +257,30 @@ def parse_currency(text: str) -> str:
         return "EUR"
     if "£" in text or re.search(r'\bGBP\b', text, re.IGNORECASE):
         return "GBP"
-    if "₹" in text or re.search(r'\bINR\b', text, re.IGNORECASE):
-        return "INR"
     if "¥" in text or re.search(r'\bJPY\b', text, re.IGNORECASE):
         return "JPY"
+    if "₹" in text or re.search(r'\bINR\b', text, re.IGNORECASE):
+        return "INR"
     if re.search(r'\bCAD\b', text, re.IGNORECASE):
         return "CAD"
     if re.search(r'\bAUD\b', text, re.IGNORECASE):
         return "AUD"
+    if re.search(r'\bCHF\b', text, re.IGNORECASE):
+        return "CHF"
+    if re.search(r'\bCNY\b', text, re.IGNORECASE):
+        return "CNY"
+    if re.search(r'\bSGD\b', text, re.IGNORECASE):
+        return "SGD"
+    if "$" in text or re.search(r'\bUSD\b', text, re.IGNORECASE):
+        return "USD"
     return "USD"
 
 
 def parse_company_and_customer(text: str) -> Tuple[str, str]:
-    """Extract issuing company name and customer name."""
-    # Vendor / Company
+    """Extract issuing company name and customer name, supporting commercial invoices (Shipper/Consignee)."""
+    # Vendor / Company / Exporter / Shipper
     company_match = re.search(
-        r'(?:from|vendor|issuer|seller|issued\s*by|company)\s*[:]?\s*([^\n\r]+)',
+        r'\b(?:shipper\s*/\s*exporter|exporter|shipper|from|vendor|issuer|seller|issued\s*by|company)\b\s*[:]?\s*([^\n\r]+)',
         text,
         re.IGNORECASE,
     )
@@ -204,20 +290,38 @@ def parse_company_and_customer(text: str) -> Tuple[str, str]:
         # Take first non-empty line that isn't a generic heading
         lines = [line.strip() for line in text.splitlines() if line.strip()]
         company_name = "Acme Corporation"
+        ignore_titles = (
+            "INVOICE", "TAX INVOICE", "COMMERCIAL INVOICE", "RECEIPT",
+            "STATEMENT", "BILLING STATEMENT", "PROFORMA INVOICE", "BILL",
+            "PROFESSIONAL SERVICES INVOICE", "SUBSCRIPTION INVOICE", "SALES INVOICE"
+        )
         for line in lines[:5]:
-            if line.upper() not in ("INVOICE", "RECEIPT", "STATEMENT", "TAX INVOICE") and len(line) > 2:
+            clean_upper = line.upper()
+            if not any(clean_upper == t or clean_upper.startswith(t + " ") or clean_upper.startswith(t + "/") for t in ignore_titles) and len(line) > 2:
                 company_name = line
                 break
 
-    # Customer / Client
+    # Customer / Client / Consignee / Buyer
     cust_match = re.search(
-        r'(?:bill\s*to|sold\s*to|invoiced\s*to|recipient|buyer|ship\s*to|customer|client|to)\s*[:]?\s*([^\n\r]+)',
+        r'\b(?:consignee|buyer|account\s*holder|client\s*name|bill\s*to|sold\s*to|invoiced\s*to|recipient|ship\s*to|deliver\s*to|customer|client)\b\s*[:]?\s*([^\n\r]*)',
         text,
         re.IGNORECASE,
     )
-    customer_name = cust_match.group(1).strip() if cust_match else "Client Corp"
+    customer_name = "Client Corp"
+    if cust_match:
+        candidate = cust_match.group(1).strip()
+        if not candidate:
+            after_pos = cust_match.end()
+            rest = [line.strip() for line in text[after_pos:].splitlines() if line.strip()]
+            if rest:
+                candidate = rest[0]
+        if candidate:
+            candidate = re.sub(r'^(?:name\s*[:]?)\s*', '', candidate, flags=re.IGNORECASE).strip()
+            customer_name = candidate
 
     return company_name, customer_name
+
+
 
 
 class BaseLLMClient(ABC):
@@ -270,11 +374,17 @@ class MockLLMClient(BaseLLMClient):
     def classify_document(self, text: str) -> Dict[str, Any]:
         """Classify text using semantic heuristic fallback."""
         lower = text.lower()
-        if any(kw in lower for kw in ["invoice", "bill to", "tax invoice", "subtotal", "amount due", "ref no"]):
+        invoice_kws = [
+            "invoice", "bill to", "tax invoice", "subtotal", "amount due", "ref no",
+            "billing statement", "statement", "statement #", "amount payable",
+            "commercial invoice", "consignee", "payment due", "balance due", "total payable"
+        ]
+        if any(kw in lower for kw in invoice_kws):
             return {"document_type": "invoice", "confidence": 0.95, "reasoning": "Mock LLM detected invoice terms"}
         elif any(kw in lower for kw in ["resume", "curriculum vitae", "education", "experience", "skills"]):
             return {"document_type": "resume", "confidence": 0.95, "reasoning": "Mock LLM detected resume terms"}
         return {"document_type": "unknown", "confidence": 0.5, "reasoning": "Unrecognized content"}
+
 
     def extract_fields(
         self,

@@ -47,13 +47,24 @@ def get_schema_for_type(doc_type: DocumentType) -> Optional[Type[BaseModel]]:
 register_document_type(
     doc_type=DocumentType.INVOICE,
     schema_cls=InvoiceData,
-    description="Invoices, billing statements, tax receipts, payment requests",
+    description="Invoices, billing statements, commercial invoices, tax receipts, payment requests",
     heuristic_keywords=[
         "invoice", "invoice number", "bill to", "due date", "subtotal",
-        "total due", "amount due", "balance due", "vat", "tax invoice", "qty", "unit price"
+        "total due", "amount due", "balance due", "vat", "tax invoice", "qty", "unit price",
+        "billing statement", "statement", "statement #", "statement no", "statement number",
+        "amount payable", "total payable", "net payable", "commercial invoice", "consignee",
+        "payment due", "total amount"
     ],
-    extraction_instructions="Extract invoice metadata including vendor company name, unique invoice number, date (YYYY-MM-DD), customer/client name, total numeric amount, and currency.",
+    extraction_instructions=(
+        "Extract invoice metadata including vendor/issuer/seller/exporter company name (company_name), "
+        "unique invoice/statement/reference number (invoice_number), billing date in ISO format YYYY-MM-DD (date), "
+        "customer/client/buyer/consignee name (customer_name), total numeric amount due (amount), and "
+        "ISO currency code like USD, EUR, GBP, JPY (currency). For commercial invoices, map 'Consignee' or 'Buyer' "
+        "to customer_name, and 'Shipper' or 'Exporter' to company_name. For billing statements, map 'Statement #' "
+        "or 'Account' to invoice_number, and 'Amount Payable' to amount."
+    ),
 )
+
 
 register_document_type(
     doc_type=DocumentType.RESUME,

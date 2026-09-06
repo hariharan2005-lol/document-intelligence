@@ -61,7 +61,21 @@ def classify_document_text(
             reasoning="Document text is empty",
         )
 
-    # 1. Run heuristic scoring
+    text_lower = text.lower()
+
+    # 1. Direct title/phrase matching for high-confidence classification
+    strong_invoice_indicators = [
+        "billing statement", "commercial invoice", "tax invoice", "proforma invoice"
+    ]
+    if any(indicator in text_lower for indicator in strong_invoice_indicators):
+        return ClassificationResult(
+            doc_type=DocumentType.INVOICE,
+            confidence=0.95,
+            source="heuristic",
+            reasoning="Matched strong invoice document title indicator",
+        )
+
+    # 2. Run heuristic scoring
     stats = score_heuristics(text)
     sorted_by_score = sorted(stats.items(), key=lambda item: (item[1][0], item[1][1]), reverse=True)
 
@@ -70,7 +84,7 @@ def classify_document_text(
         second_count = sorted_by_score[1][1][0] if len(sorted_by_score) > 1 else 0
 
         # Strong heuristic match: at least 2 distinct keywords and clear margin over other types
-        if top_count >= 2 and (top_count > second_count or top_score >= 0.25):
+        if top_count >= 2 and (top_count > second_count or top_score >= 0.15):
             confidence = min(0.99, max(0.75, round(0.55 + top_score * 1.1, 2)))
             return ClassificationResult(
                 doc_type=top_type,
@@ -79,7 +93,7 @@ def classify_document_text(
                 reasoning=f"Matched {top_count} signature keywords ({round(top_score * 100, 1)}%) for {top_type.value}",
             )
 
-    # 2. Fall back to LLM if heuristics were ambiguous and LLM client is provided
+    # 3. Fall back to LLM if heuristics were ambiguous and LLM client is provided
     if llm_client:
         try:
             llm_result = llm_client.classify_document(text)
@@ -99,13 +113,14 @@ def classify_document_text(
         except Exception as exc:
             logger.warning("LLM classification failed: %s. Defaulting to top heuristic or unknown.", exc)
 
-    # Default fallback if no LLM or LLM fails
-    if sorted_scores and sorted_scores[0][1] > 0.1:
+    # 4. Default fallback if no LLM or LLM fails
+    if sorted_by_score and sorted_by_score[0][1][0] >= 1:
+        top_type, (top_count, top_score) = sorted_by_score[0]
         return ClassificationResult(
-            doc_type=sorted_scores[0][0],
-            confidence=0.5,
+            doc_type=top_type,
+            confidence=0.6,
             source="heuristic_low_confidence",
-            reasoning="Ambiguous match, highest weak heuristic score",
+            reasoning=f"Ambiguous match, highest weak heuristic score ({top_count} keyword)",
         )
 
     return ClassificationResult(
@@ -114,3 +129,4 @@ def classify_document_text(
         source="fallback",
         reasoning="No strong patterns detected",
     )
+

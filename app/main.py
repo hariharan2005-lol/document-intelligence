@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from typing import List, Optional
 from fastapi import FastAPI, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -12,7 +13,8 @@ from app.db.models import DocumentModel
 from app.db.session import get_db, init_db
 from app.pipeline.runner import run_pipeline
 from app.pipeline.validate import DocumentValidationError
-from app.schemas.common import DocumentResponse, DocumentSearchResult, DocumentType
+from app.schemas.common import DocumentResponse, DocumentSummaryResponse, DocumentSearchResult, DocumentType
+from app.ui import HTML_CONTENT
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -53,6 +55,13 @@ def health_check():
         "llm_provider": settings.LLM_PROVIDER,
         "max_upload_size_mb": settings.MAX_UPLOAD_SIZE_BYTES / (1024 * 1024),
     }
+
+
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/ui", response_class=HTMLResponse, tags=["Frontend"], summary="Document Intelligence Web Dashboard")
+def serve_dashboard():
+    """Serve single-page HTML dashboard for uploading, filtering, and viewing documents."""
+    return HTMLResponse(content=HTML_CONTENT)
 
 
 @app.post(
@@ -113,6 +122,11 @@ def search_documents(
     min_amount: Optional[float] = Query(None, description="Minimum invoice total amount"),
     max_amount: Optional[float] = Query(None, description="Maximum invoice total amount"),
     currency: Optional[str] = Query(None, description="Invoice currency code (e.g. USD)"),
+    # Output formatting
+    summary: bool = Query(
+        False,
+        description="When true, return only id, filename, doc_type, and structured_data (skips raw_text and processing_meta)",
+    ),
     # General text search
     query: Optional[str] = Query(None, description="Keyword search in cleaned raw document text"),
     limit: int = Query(50, ge=1, le=100),
@@ -124,6 +138,7 @@ def search_documents(
     - Find candidates matching one or more skills (e.g., 'find candidates who know Python and Flask')
     - Filter invoices by date ranges and amounts
     - Search across raw cleaned text
+    - Optionally return summary view omitting raw text and processing metadata
     """
     db_query = db.query(DocumentModel)
 
@@ -182,9 +197,14 @@ def search_documents(
     total = len(filtered)
     paginated = filtered[offset : offset + limit]
 
+    if summary:
+        results = [DocumentSummaryResponse.model_validate(doc) for doc in paginated]
+    else:
+        results = [DocumentResponse.model_validate(doc) for doc in paginated]
+
     return DocumentSearchResult(
         total=total,
-        results=[DocumentResponse.model_validate(doc) for doc in paginated]
+        results=results
     )
 
 

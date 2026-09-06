@@ -1,7 +1,7 @@
 """Common data types and API response schemas."""
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -32,7 +32,17 @@ class DocumentResponse(BaseModel):
     error_message: Optional[str] = None
 
 
+class DocumentSummaryResponse(BaseModel):
+    """Summary representation of a document containing only essential business fields."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    filename: str
+    doc_type: DocumentType
+    structured_data: Optional[Dict[str, Any]] = None
+
+
 class DocumentSearchResult(BaseModel):
     """Search query response list item."""
     total: int
-    results: List[DocumentResponse]
+    results: List[Union[DocumentSummaryResponse, DocumentResponse]]

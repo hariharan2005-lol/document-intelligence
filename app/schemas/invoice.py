@@ -3,14 +3,14 @@ from pydantic import BaseModel, Field
 
 
 class InvoiceData(BaseModel):
-    """Structured fields extracted from an invoice document."""
+    """Structured fields extracted from an invoice, billing statement, or commercial invoice document."""
     company_name: str = Field(
         ...,
-        description="Name of the vendor, issuer, or company issuing the invoice"
+        description="Name of the vendor, issuer, seller, shipper, or exporter company issuing the invoice"
     )
     invoice_number: str = Field(
         ...,
-        description="Unique identifier or reference number of the invoice"
+        description="Unique identifier, invoice number, statement number, or reference code"
     )
     date: str = Field(
         ...,
@@ -18,13 +18,14 @@ class InvoiceData(BaseModel):
     )
     customer_name: str = Field(
         ...,
-        description="Name of client or customer being billed"
+        description="Name of client, customer, buyer, or consignee being billed"
     )
     amount: float = Field(
         ...,
-        description="Total invoice monetary amount due"
+        description="Total invoice monetary amount due, payable, or billed"
     )
     currency: str = Field(
         default="USD",
-        description="Three-letter ISO currency code or currency symbol (e.g. USD, EUR, GBP)"
+        description="Three-letter ISO currency code or currency symbol (e.g. USD, EUR, GBP, JPY)"
     )
+

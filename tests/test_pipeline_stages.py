@@ -166,3 +166,138 @@ def test_extract_fields_invoice_alternative_wording():
     assert data["amount"] == 12340.50
     assert data["currency"] == "USD"
 
+
+def test_classify_billing_statement_without_word_invoice():
+    """Verify Bug 1 fix: Document titled BILLING STATEMENT with Statement # and Amount Payable is classified as INVOICE."""
+    statement_text = """
+    BILLING STATEMENT
+    Account Number: ACC-88301
+    Statement #: STMT-2026-901
+    Date: 2026-03-01
+    Bill To: Sarah Jenkins
+    Amount Payable: $3,200.00
+    Payment Due: 2026-03-25
+    """
+    result = classify_document_text(statement_text)
+    assert result.doc_type == DocumentType.INVOICE
+    assert result.source in ("heuristic", "llm")
+    assert result.confidence >= 0.75
+
+
+def test_extract_commercial_invoice_consignee_and_eur():
+    """Verify Bug 2 fix: COMMERCIAL INVOICE with Consignee and EUR currency extracts correctly without blank fields."""
+    comm_invoice_text = """
+    COMMERCIAL INVOICE
+    Shipper / Exporter: Atlas Cargo Logistics BV, Rotterdam
+    Consignee: Euro Trade GmbH, Berlin
+    Ref No: CI-2026-0045
+    Date: 14-Jan-2026
+    Description: Industrial machinery parts
+    Amount: 45,250.00 EUR
+    Currency: EUR
+    """
+    mock_llm = MockLLMClient()
+    result = extract_structured_fields(comm_invoice_text, DocumentType.INVOICE, mock_llm)
+    assert result.is_valid is True
+    data = result.structured_data
+    assert data is not None
+    assert "Atlas Cargo Logistics" in data["company_name"]
+    assert "Euro Trade GmbH" in data["customer_name"]
+    assert data["invoice_number"] == "CI-2026-0045"
+    assert data["date"] == "2026-01-14"
+    assert data["amount"] == 45250.00
+    assert data["currency"] == "EUR"
+
+
+def test_extract_invoice_number_prevents_slash_invoice_garbage():
+    """Verify Bug 3 fix: Header with slash ('COMMERCIAL INVOICE / INVOICE') does not extract as '/Invoice' instead of real number."""
+    text_with_slash_header = """
+    COMMERCIAL INVOICE / INVOICE
+    Seller: Pacific Oceanics Ltd
+    Buyer: MegaRetail Inc
+    Invoice / Ref No: MPL-9081
+    Date: 2026-02-18
+    Total Amount: $14,500.00
+    """
+    mock_llm = MockLLMClient()
+    result = extract_structured_fields(text_with_slash_header, DocumentType.INVOICE, mock_llm)
+    assert result.is_valid is True
+    data = result.structured_data
+    assert data["invoice_number"] == "MPL-9081"
+    assert data["invoice_number"] != "/Invoice"
+    assert not data["invoice_number"].startswith("/")
+
+
+def test_extract_whole_number_amount_jpy():
+    """Verify Bug 4 fix: Invoices with whole number amounts and comma separators (e.g. 890,000 JPY) extract correctly."""
+    jpy_invoice_text = """
+    INVOICE
+    Issuer: Tokyo Electronics Ltd
+    Customer: Osaka Industrial Corp
+    Invoice #: TYO-88219
+    Date: 2026-05-12
+    Amount Payable: ¥890,000
+    Currency: JPY
+    """
+    mock_llm = MockLLMClient()
+    result = extract_structured_fields(jpy_invoice_text, DocumentType.INVOICE, mock_llm)
+    assert result.is_valid is True
+    data = result.structured_data
+    assert data["amount"] == 890000.0
+    assert data["amount"] != 100.0
+    assert data["currency"] == "JPY"
+    assert data["invoice_number"] == "TYO-88219"
+
+
+def test_pdf_pipeline_stages_sample_invoice_6(fixtures_path):
+    """Verify PDF text-extraction path for sample_invoice_6.pdf (Commercial invoice with Consignee and EUR)."""
+    pdf_bytes = (fixtures_path / "sample_invoice_6.pdf").read_bytes()
+    text = extract_text_from_file(pdf_bytes, "application/pdf")
+    cleaned = clean_extracted_text(text)
+
+    # Classify
+    classification = classify_document_text(cleaned)
+    assert classification.doc_type == DocumentType.INVOICE
+
+    # Extract fields
+    result = extract_structured_fields(cleaned, classification.doc_type, MockLLMClient())
+    assert result.is_valid is True
+    assert result.structured_data["company_name"] == "Ironclad Freight & Logistics"
+    assert result.structured_data["customer_name"] == "Baltic Trade Partners B.V."
+    assert result.structured_data["invoice_number"] == "ICF-EU-5567"
+    assert result.structured_data["date"] == "2026-06-12"
+    assert result.structured_data["amount"] == 4890.0
+    assert result.structured_data["currency"] == "EUR"
+
+
+def test_pdf_pipeline_stages_sample_invoice_7(fixtures_path):
+    """Verify PDF text-extraction path for sample_invoice_7.pdf (MPL-9081 and avoid /Invoice garbage)."""
+    pdf_bytes = (fixtures_path / "sample_invoice_7.pdf").read_bytes()
+    text = extract_text_from_file(pdf_bytes, "application/pdf")
+    cleaned = clean_extracted_text(text)
+
+    result = extract_structured_fields(cleaned, DocumentType.INVOICE, MockLLMClient())
+    assert result.is_valid is True
+    assert result.structured_data["invoice_number"] == "MPL-9081"
+    assert result.structured_data["invoice_number"] != "/Invoice"
+    assert result.structured_data["customer_name"] == "Riverside Patisserie Ltd."
+    assert result.structured_data["amount"] == 1462.75
+    assert result.structured_data["currency"] == "CAD"
+
+
+def test_pdf_pipeline_stages_sample_invoice_4(fixtures_path):
+    """Verify PDF text-extraction path for sample_invoice_4.pdf (890,000 JPY whole number amount)."""
+    pdf_bytes = (fixtures_path / "sample_invoice_4.pdf").read_bytes()
+    text = extract_text_from_file(pdf_bytes, "application/pdf")
+    cleaned = clean_extracted_text(text)
+
+    result = extract_structured_fields(cleaned, DocumentType.INVOICE, MockLLMClient())
+    assert result.is_valid is True
+    assert result.structured_data["amount"] == 890000.0
+    assert result.structured_data["amount"] != 100.0
+    assert result.structured_data["currency"] == "JPY"
+    assert result.structured_data["customer_name"] == "Green Leaf Distributors Pte Ltd"
+    assert result.structured_data["invoice_number"] == "KTI-2026-3390"
+
+
+

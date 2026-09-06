@@ -117,7 +117,8 @@ pytest -v
 ```bash
 uvicorn app.main:app --reload --port 8000
 ```
-Interactive API documentation will be available at: **http://localhost:8000/docs**.
+* **Web UI Dashboard**: Visit **http://localhost:8000/** (or **http://localhost:8000/ui**) for the single-page document upload and review dashboard.
+* **Interactive API Documentation**: Available at **http://localhost:8000/docs**.
 
 ---
 
@@ -144,4 +145,31 @@ curl -X GET "http://localhost:8000/documents/search?doc_type=resume&skill=Python
 Filter invoices between $1,000 and $5,000 billed in Q1 2024:
 ```bash
 curl -X GET "http://localhost:8000/documents/search?doc_type=invoice&min_amount=1000&max_amount=5000&date_from=2024-01-01&date_to=2024-03-31"
+```
+
+### Clean Summary View (`GET /documents/search?summary=true`)
+Retrieve only essential business fields (`id`, `filename`, `doc_type`, `structured_data`) without raw text clutter:
+```bash
+curl -X GET "http://localhost:8000/documents/search?summary=true"
+```
+**Sample response**:
+```json
+{
+  "total": 1,
+  "results": [
+    {
+      "id": "c5484c8e-9bf0-46c9-8672-096e286559ff",
+      "filename": "sample_invoice.pdf",
+      "doc_type": "invoice",
+      "structured_data": {
+        "company_name": "Acme Solutions Corp",
+        "invoice_number": "INV-2024-8842",
+        "date": "2024-03-15",
+        "customer_name": "Globex International",
+        "amount": 4500.0,
+        "currency": "USD"
+      }
+    }
+  ]
+}
 ```

@@ -1,4 +1,5 @@
-"""End-to-end integration tests for Document Intelligence API endpoints."""
+import io
+import docx
 import pytest
 
 
@@ -272,5 +273,259 @@ def test_upload_with_live_llm_primary_path(client, fixtures_path, monkeypatch):
     assert meta["llm_model"] == "gpt-4o-mini"
     assert meta["fallback_used"] is False
     assert meta["fallback_reason"] is None
+
+
+def test_search_documents_with_summary_flag(client, fixtures_path):
+    """Test search endpoint summary flag: summary=true returns clean business fields without raw_text or processing_meta."""
+    # Ingest sample invoice
+    with open(fixtures_path / "sample_invoice.pdf", "rb") as f:
+        upload_resp = client.post(
+            "/documents",
+            files={"file": ("sample_invoice.pdf", f, "application/pdf")}
+        )
+    assert upload_resp.status_code == 201
+
+    # 1. Query with summary=true
+    sum_resp = client.get("/documents/search", params={"doc_type": "invoice", "summary": True})
+    assert sum_resp.status_code == 200
+    sum_data = sum_resp.json()
+    assert sum_data["total"] >= 1
+
+    item = sum_data["results"][0]
+    # Required summary fields MUST be present
+    assert "id" in item
+    assert "filename" in item
+    assert "doc_type" in item
+    assert "structured_data" in item
+    assert item["doc_type"] == "invoice"
+
+    # Verify structured business fields are intact
+    bus_fields = item["structured_data"]
+    assert "company_name" in bus_fields
+    assert "invoice_number" in bus_fields
+    assert "date" in bus_fields
+    assert "customer_name" in bus_fields
+    assert "amount" in bus_fields
+    assert "currency" in bus_fields
+
+    # Verbose clutter fields MUST NOT be present
+    assert "raw_text" not in item
+    assert "processing_meta" not in item
+    assert "file_type" not in item
+    assert "status" not in item
+
+    # 2. Query with summary=false (default full object)
+    full_resp = client.get("/documents/search", params={"doc_type": "invoice", "summary": False})
+    assert full_resp.status_code == 200
+    full_item = full_resp.json()["results"][0]
+    assert "raw_text" in full_item
+    assert "processing_meta" in full_item
+    assert "file_type" in full_item
+    assert "status" in full_item
+
+
+def test_serve_frontend_dashboard(client):
+    """Verify GET / and GET /ui return 200 OK with HTML dashboard content."""
+    for path in ("/", "/ui"):
+        resp = client.get(path)
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
+        assert "Document Intelligence Dashboard" in resp.text
+        assert "uploadForm" in resp.text
+        assert "docTypeFilter" in resp.text
+        assert "/documents/search?summary=true" in resp.text
+
+
+def _create_docx_bytes(text: str) -> bytes:
+    """Helper to generate an in-memory DOCX file from multiline text."""
+    doc = docx.Document()
+    for line in text.strip().splitlines():
+        doc.add_paragraph(line.strip())
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+def test_e2e_billing_statement_upload_and_classify(client):
+    """End-to-end test: Upload BILLING STATEMENT with Statement # and Amount Payable, verify classified as invoice."""
+    content = """
+    BILLING STATEMENT
+    Apex Cloud Hosting Services
+    Account Number: ACC-9920
+    Statement #: STMT-5501
+    Date: 2026-03-10
+    Bill To: Acme Corp
+    Amount Payable: $1,450.00
+    Payment Due: 2026-03-31
+    """
+    file_bytes = _create_docx_bytes(content)
+    resp = client.post(
+        "/documents",
+        files={"file": ("billing_stmt.docx", file_bytes, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
+    )
+    assert resp.status_code == 201, resp.text
+    data = resp.json()
+    assert data["doc_type"] == "invoice"
+    assert data["status"] == "processed"
+    structured = data["structured_data"]
+    assert structured["invoice_number"] == "STMT-5501"
+    assert structured["amount"] == 1450.0
+    assert "Acme Corp" in structured["customer_name"]
+
+
+def test_e2e_commercial_invoice_consignee_and_eur(client):
+    """End-to-end test: Commercial invoice with Consignee, Exporter, and EUR currency extracts all fields."""
+    content = """
+    COMMERCIAL INVOICE
+    Shipper / Exporter: Atlas Cargo Logistics BV
+    Consignee: Euro Trade GmbH
+    Ref No: CI-2026-0045
+    Date: 14-Jan-2026
+    Amount Payable: 45,250.00 EUR
+    Currency: EUR
+    """
+    file_bytes = _create_docx_bytes(content)
+    resp = client.post(
+        "/documents",
+        files={"file": ("commercial_invoice.docx", file_bytes, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
+    )
+    assert resp.status_code == 201, resp.text
+    data = resp.json()
+    assert data["doc_type"] == "invoice"
+    assert data["status"] == "processed"
+    structured = data["structured_data"]
+    assert structured is not None
+    assert "Atlas Cargo Logistics" in structured["company_name"]
+    assert "Euro Trade GmbH" in structured["customer_name"]
+    assert structured["invoice_number"] == "CI-2026-0045"
+    assert structured["date"] == "2026-01-14"
+    assert structured["amount"] == 45250.0
+    assert structured["currency"] == "EUR"
+
+
+def test_e2e_invoice_number_prevents_slash_invoice(client):
+    """End-to-end test: Invoice with 'COMMERCIAL INVOICE / INVOICE' extracts real 'MPL-9081' not '/Invoice'."""
+    content = """
+    COMMERCIAL INVOICE / INVOICE
+    Seller: Pacific Oceanics Ltd
+    Buyer: MegaRetail Inc
+    Invoice / Ref No: MPL-9081
+    Date: 2026-02-18
+    Total Amount: $14,500.00
+    """
+    file_bytes = _create_docx_bytes(content)
+    resp = client.post(
+        "/documents",
+        files={"file": ("slash_header_invoice.docx", file_bytes, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
+    )
+    assert resp.status_code == 201, resp.text
+    data = resp.json()
+    structured = data["structured_data"]
+    assert structured["invoice_number"] == "MPL-9081"
+    assert structured["invoice_number"] != "/Invoice"
+    assert not structured["invoice_number"].startswith("/")
+
+
+def test_e2e_whole_number_amount_jpy(client):
+    """End-to-end test: Invoices with whole number amounts (890,000 JPY) extract correctly, not default 100."""
+    content = """
+    INVOICE
+    Issuer: Tokyo Electronics Ltd
+    Customer: Osaka Industrial Corp
+    Invoice #: TYO-88219
+    Date: 2026-05-12
+    Amount Payable: ¥890,000
+    Currency: JPY
+    """
+    file_bytes = _create_docx_bytes(content)
+    resp = client.post(
+        "/documents",
+        files={"file": ("jpy_invoice.docx", file_bytes, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
+    )
+    assert resp.status_code == 201, resp.text
+    data = resp.json()
+    structured = data["structured_data"]
+    assert structured["amount"] == 890000.0
+    assert structured["amount"] != 100.0
+    assert structured["currency"] == "JPY"
+    assert structured["invoice_number"] == "TYO-88219"
+
+
+def test_e2e_commercial_invoice_real_pdf_upload(client, fixtures_path):
+    """Regression test: Upload real PDF sample_invoice_6.pdf, assert Consignee and EUR extracted without blank fields."""
+    with open(fixtures_path / "sample_invoice_6.pdf", "rb") as f:
+        resp = client.post(
+            "/documents",
+            files={"file": ("sample_invoice_6.pdf", f, "application/pdf")}
+        )
+    assert resp.status_code == 201, resp.text
+    data = resp.json()
+    assert data["status"] == "processed"
+    assert data["doc_type"] == "invoice"
+    structured = data["structured_data"]
+    assert structured is not None
+    assert structured["company_name"] == "Ironclad Freight & Logistics"
+    assert structured["customer_name"] == "Baltic Trade Partners B.V."
+    assert structured["invoice_number"] == "ICF-EU-5567"
+    assert structured["date"] == "2026-06-12"
+    assert structured["amount"] == 4890.0
+    assert structured["currency"] == "EUR"
+
+
+def test_e2e_invoice_number_real_pdf_upload(client, fixtures_path):
+    """Regression test: Upload real PDF sample_invoice_7.pdf, assert invoice number is MPL-9081, not /Invoice."""
+    with open(fixtures_path / "sample_invoice_7.pdf", "rb") as f:
+        resp = client.post(
+            "/documents",
+            files={"file": ("sample_invoice_7.pdf", f, "application/pdf")}
+        )
+    assert resp.status_code == 201, resp.text
+    data = resp.json()
+    assert data["status"] == "processed"
+    structured = data["structured_data"]
+    assert structured["invoice_number"] == "MPL-9081"
+    assert structured["invoice_number"] != "/Invoice"
+    assert structured["customer_name"] == "Riverside Patisserie Ltd."
+    assert structured["amount"] == 1462.75
+    assert structured["currency"] == "CAD"
+
+
+def test_e2e_whole_number_amount_real_pdf_upload(client, fixtures_path):
+    """Regression test: Upload real PDF sample_invoice_4.pdf, assert amount is 890000.0 JPY, not 100.0."""
+    with open(fixtures_path / "sample_invoice_4.pdf", "rb") as f:
+        resp = client.post(
+            "/documents",
+            files={"file": ("sample_invoice_4.pdf", f, "application/pdf")}
+        )
+    assert resp.status_code == 201, resp.text
+    data = resp.json()
+    assert data["status"] == "processed"
+    structured = data["structured_data"]
+    assert structured["amount"] == 890000.0
+    assert structured["amount"] != 100.0
+    assert structured["currency"] == "JPY"
+    assert structured["customer_name"] == "Green Leaf Distributors Pte Ltd"
+    assert structured["invoice_number"] == "KTI-2026-3390"
+
+
+def test_e2e_billing_statement_real_pdf_upload(client, fixtures_path):
+    """Regression test: Upload real PDF sample_invoice_3.pdf, assert classified as invoice with correct fields."""
+    with open(fixtures_path / "sample_invoice_3.pdf", "rb") as f:
+        resp = client.post(
+            "/documents",
+            files={"file": ("sample_invoice_3.pdf", f, "application/pdf")}
+        )
+    assert resp.status_code == 201, resp.text
+    data = resp.json()
+    assert data["status"] == "processed"
+    assert data["doc_type"] == "invoice"
+    structured = data["structured_data"]
+    assert structured["invoice_number"] == "SOL-88231"
+    assert structured["amount"] == 3275.0
+    assert structured["customer_name"] == "Meadowbrook Schools District"
+
+
+
+
 
 
