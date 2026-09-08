@@ -135,6 +135,19 @@ curl -X POST "http://localhost:8000/documents" \
 curl -X GET "http://localhost:8000/documents/<DOCUMENT_UUID>"
 ```
 
+### Delete a Document by ID (`DELETE /documents/{id}`)
+```bash
+curl -X DELETE "http://localhost:8000/documents/<DOCUMENT_UUID>"
+```
+**Sample response**:
+```json
+{
+  "status": "success",
+  "message": "Document '<DOCUMENT_UUID>' successfully deleted.",
+  "id": "<DOCUMENT_UUID>"
+}
+```
+
 ### Search Resumes by Skills (`GET /documents/search`)
 Find candidates who know Python and Flask:
 ```bash

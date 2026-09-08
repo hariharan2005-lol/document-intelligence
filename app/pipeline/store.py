@@ -10,6 +10,12 @@ from app.schemas.common import DocumentStatus, DocumentType
 logger = logging.getLogger(__name__)
 
 
+# Plain-English: Saves the completed document record into SQLite using SQLAlchemy:
+# 1. Assigns a unique UUID string as the primary key.
+# 2. Creates a DocumentModel row populated with file metadata, raw text, and extracted JSON fields.
+# 3. Stages the row in the active database session via db.add().
+# 4. Commits the transaction to disk with db.commit(), permanently saving it into SQLite.
+# 5. Calls db.refresh() to reload database-generated fields (like created_at timestamps) onto the returned model.
 def persist_document(
     db: Session,
     filename: str,

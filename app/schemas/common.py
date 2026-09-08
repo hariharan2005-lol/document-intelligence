@@ -46,3 +46,11 @@ class DocumentSearchResult(BaseModel):
     """Search query response list item."""
     total: int
     results: List[Union[DocumentSummaryResponse, DocumentResponse]]
+
+
+class DocumentDeleteResponse(BaseModel):
+    """Confirmation payload returned when a document is deleted."""
+    status: str = "success"
+    message: str
+    id: str
+

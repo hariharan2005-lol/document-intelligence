@@ -9,6 +9,8 @@ import pypdf
 from app.config import settings
 
 
+# Plain-English: Custom error raised when an uploaded document fails any checks
+# (e.g., file is empty, too big, wrong file format, or corrupted).
 class DocumentValidationError(Exception):
     """Raised when uploaded file fails validation or corruption checks."""
     def __init__(self, message: str, status_code: int = 400):
@@ -17,6 +19,8 @@ class DocumentValidationError(Exception):
         self.status_code = status_code
 
 
+# Plain-English: A simple data container that stores a verified file's details
+# (name, raw bytes, verified MIME type, and size) once it passes all checks.
 @dataclass
 class ValidatedFile:
     filename: str
@@ -25,6 +29,9 @@ class ValidatedFile:
     size_bytes: int
 
 
+# Plain-English: Inspects the very first few bytes ("magic numbers") of the file
+# to accurately detect if it's a PDF, PNG, JPEG, or DOCX, rather than trusting
+# whatever file extension or header the client sent.
 def detect_mime_from_bytes(file_bytes: bytes) -> Optional[str]:
     """Inspect magic bytes to detect file MIME type reliably without relying on client headers."""
     if len(file_bytes) < 4:
@@ -55,6 +62,9 @@ def detect_mime_from_bytes(file_bytes: bytes) -> Optional[str]:
     return None
 
 
+# Plain-English: Checks whether the file is undamaged by actually trying to open and read
+# it with the appropriate parser (pypdf for PDF, zipfile for DOCX, Pillow for images).
+# Raises an error if the file is broken or cannot be opened.
 def verify_file_integrity(file_bytes: bytes, mime_type: str) -> None:
     """Verify file integrity and ensure the file is not corrupted."""
     try:
@@ -79,6 +89,10 @@ def verify_file_integrity(file_bytes: bytes, mime_type: str) -> None:
         raise DocumentValidationError(f"Corrupted or unreadable file: {str(exc)}") from exc
 
 
+# Plain-English: The primary entrance door for uploaded documents.
+# It runs all validation stages: makes sure a filename was given, confirms the file
+# isn't 0 bytes, verifies it's within the maximum file size limit, detects its real format,
+# and checks that it's uncorrupted.
 def validate_upload(filename: str, file_bytes: bytes) -> ValidatedFile:
     """Execute Stage 1 & 2 validation on an incoming upload."""
     if not filename:

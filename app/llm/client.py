@@ -18,6 +18,8 @@ from app.llm.prompts import (
 logger = logging.getLogger(__name__)
 
 
+# Plain-English: Cleans up the LLM's response by removing markdown code fences (like ```json ... ```)
+# and trimming surrounding whitespace so the text can be parsed directly as valid JSON.
 def clean_llm_json_response(raw_text: str) -> str:
     """Strip code fences and trailing/leading artifacts from LLM JSON response."""
     text = raw_text.strip()
@@ -30,6 +32,8 @@ def clean_llm_json_response(raw_text: str) -> str:
     return text.strip()
 
 
+# Plain-English: Finds dates written in various formats (e.g. "02-Sep-2026", "September 1, 2026",
+# "2026-09-02", "12.06.2026") anywhere in the text and converts them into standard ISO YYYY-MM-DD format.
 def parse_iso_date(text: str) -> str:
     """Extract and normalize a date string from arbitrary text into ISO 8601 (YYYY-MM-DD)."""
     # Look for explicit date labels first
@@ -109,6 +113,8 @@ INVALID_INVOICE_NUM_WORDS = {
 }
 
 
+# Plain-English: Searches the text for invoice, reference, or statement numbers (e.g. "INV-2024-8842",
+# "Ref No: MPL-9081", "Statement #: 5501"), while ignoring document headers or false positives like "/Invoice".
 def parse_invoice_number(text: str) -> str:
     """Extract invoice or reference number supporting varied labels, avoiding slash/label collisions."""
     # Pattern 1: Explicit labels with colon, hash, or number keywords
@@ -168,6 +174,8 @@ def parse_invoice_number(text: str) -> str:
     return "INV-DEFAULT-001"
 
 
+# Plain-English: Finds the total amount due or payable in the invoice text (handling labels like
+# "Grand Total", "Amount Payable", or currency signs) and converts whole numbers or decimals to float.
 def parse_invoice_amount(text: str) -> float:
     """Extract numeric monetary amount due supporting varied labels, whole numbers (e.g. 890,000 JPY), and decimals."""
     # 1. High priority labels: Amount Payable, Grand Total, Net Payable, Total Due, Balance Due, etc.
@@ -251,6 +259,8 @@ def parse_invoice_amount(text: str) -> float:
     return 100.00
 
 
+# Plain-English: Detects which currency the invoice uses (e.g., USD, EUR, GBP, JPY, CAD)
+# by checking for currency symbols ($, €, ¥, £) or currency abbreviations in the text.
 def parse_currency(text: str) -> str:
     """Detect ISO currency code from symbols or text."""
     if "€" in text or re.search(r'\bEUR\b', text, re.IGNORECASE):
@@ -276,6 +286,8 @@ def parse_currency(text: str) -> str:
     return "USD"
 
 
+# Plain-English: Extracts the names of both the issuer (seller/vendor/shipper) and the
+# receiver (customer/client/consignee) of the invoice.
 def parse_company_and_customer(text: str) -> Tuple[str, str]:
     """Extract issuing company name and customer name, supporting commercial invoices (Shipper/Consignee)."""
     # Vendor / Company / Exporter / Shipper
@@ -324,6 +336,8 @@ def parse_company_and_customer(text: str) -> Tuple[str, str]:
 
 
 
+# Plain-English: The blueprint (interface) that all LLM clients must follow.
+# It defines the required contract for classifying documents and extracting structured fields.
 class BaseLLMClient(ABC):
     """Abstract interface for LLM operations."""
 
@@ -356,6 +370,8 @@ class BaseLLMClient(ABC):
         pass
 
 
+# Plain-English: A simulated, offline LLM client that uses regular expressions and pattern matching
+# instead of calling an external AI API. Useful for automated tests and as an offline fallback.
 class MockLLMClient(BaseLLMClient):
     """Deterministic Mock LLM client for offline execution and automated testing."""
 
@@ -371,6 +387,7 @@ class MockLLMClient(BaseLLMClient):
     def model_name(self) -> str:
         return "mock-heuristic-v1"
 
+    # Plain-English: Checks for common invoice or resume keywords to categorize the document offline.
     def classify_document(self, text: str) -> Dict[str, Any]:
         """Classify text using semantic heuristic fallback."""
         lower = text.lower()
@@ -385,7 +402,7 @@ class MockLLMClient(BaseLLMClient):
             return {"document_type": "resume", "confidence": 0.95, "reasoning": "Mock LLM detected resume terms"}
         return {"document_type": "unknown", "confidence": 0.5, "reasoning": "Unrecognized content"}
 
-
+    # Plain-English: Routes to the appropriate offline parser (invoice or resume) to extract fields as a JSON string.
     def extract_fields(
         self,
         text: str,
@@ -406,6 +423,7 @@ class MockLLMClient(BaseLLMClient):
             return self._extract_mock_resume(text)
         return "{}"
 
+    # Plain-English: Uses regex patterns to extract invoice numbers, dates, amounts, currencies, and company names.
     def _extract_mock_invoice(self, text: str) -> str:
         """Extract invoice fields from text using generalized pattern matching."""
         company_name, customer_name = parse_company_and_customer(text)
@@ -424,6 +442,7 @@ class MockLLMClient(BaseLLMClient):
         }
         return json.dumps(result)
 
+    # Plain-English: Uses regex patterns to extract candidate name, email, phone, skills, education, and jobs.
     def _extract_mock_resume(self, text: str) -> str:
         """Extract resume fields from text using pattern matching."""
         # Candidate name
@@ -494,6 +513,8 @@ class MockLLMClient(BaseLLMClient):
         return json.dumps(result)
 
 
+# Plain-English: Connects to OpenAI's Chat Completions API (or local OpenAI-compatible APIs
+# like Ollama or LocalAI) to classify documents and extract structured JSON fields.
 class OpenAILLMClient(BaseLLMClient):
     """OpenAI or OpenAI-compatible (e.g. Ollama/LocalAI) API client implementation."""
 
@@ -516,6 +537,7 @@ class OpenAILLMClient(BaseLLMClient):
     def model_name(self) -> str:
         return self.model
 
+    # Plain-English: Performs the HTTP POST request to the OpenAI API endpoint with JSON mode enabled.
     def _call_api(self, messages: list) -> str:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -533,6 +555,7 @@ class OpenAILLMClient(BaseLLMClient):
             data = response.json()
             return data["choices"][0]["message"]["content"]
 
+    # Plain-English: Asks OpenAI to determine whether the document is an invoice, resume, or unknown.
     def classify_document(self, text: str) -> Dict[str, Any]:
         messages = [
             {"role": "system", "content": CLASSIFICATION_SYSTEM_PROMPT},
@@ -542,6 +565,7 @@ class OpenAILLMClient(BaseLLMClient):
         cleaned = clean_llm_json_response(raw)
         return json.loads(cleaned)
 
+    # Plain-English: Sends the document text and target JSON schema to OpenAI, returning extracted fields.
     def extract_fields(
         self,
         text: str,
@@ -571,6 +595,8 @@ class OpenAILLMClient(BaseLLMClient):
         return clean_llm_json_response(raw)
 
 
+# Plain-English: Connects to Anthropic's Claude API (e.g. claude-3-5-sonnet) via HTTP
+# to classify documents and extract structured JSON data.
 class AnthropicLLMClient(BaseLLMClient):
     """Anthropic Claude API client implementation."""
 
@@ -593,6 +619,7 @@ class AnthropicLLMClient(BaseLLMClient):
     def model_name(self) -> str:
         return self.model
 
+    # Plain-English: Sends the prompt to Anthropic's Messages API endpoint and extracts Claude's text answer.
     def _call_api(self, system_prompt: str, user_prompt: str) -> str:
         headers = {
             "x-api-key": self.api_key,
@@ -616,12 +643,14 @@ class AnthropicLLMClient(BaseLLMClient):
             text_parts = [b.get("text", "") for b in content_blocks if b.get("type") == "text"]
             return "".join(text_parts)
 
+    # Plain-English: Prompts Claude to determine whether the document text is an invoice, resume, or unknown.
     def classify_document(self, text: str) -> Dict[str, Any]:
         prompt = f"Document Text:\n{text[:4000]}"
         raw = self._call_api(CLASSIFICATION_SYSTEM_PROMPT, prompt)
         cleaned = clean_llm_json_response(raw)
         return json.loads(cleaned)
 
+    # Plain-English: Instructs Claude to extract structured fields matching the JSON schema, with error feedback on retries.
     def extract_fields(
         self,
         text: str,
@@ -646,6 +675,8 @@ class AnthropicLLMClient(BaseLLMClient):
         return clean_llm_json_response(raw)
 
 
+# Plain-English: Connects to Google's Gemini REST API (e.g. gemini-1.5-flash) using JSON response mode
+# to classify documents and extract structured schema data.
 class GeminiLLMClient(BaseLLMClient):
     """Google Gemini REST API client implementation."""
 
@@ -662,6 +693,7 @@ class GeminiLLMClient(BaseLLMClient):
     def model_name(self) -> str:
         return self.model
 
+    # Plain-English: Sends the prompt to Google Gemini's generateContent endpoint and extracts the text content.
     def _call_api(self, system_instruction: str, user_prompt: str) -> str:
         headers = {"Content-Type": "application/json"}
         payload = {
@@ -678,11 +710,13 @@ class GeminiLLMClient(BaseLLMClient):
             data = response.json()
             return data["candidates"][0]["content"]["parts"][0]["text"]
 
+    # Plain-English: Prompts Gemini to categorize the document text as an invoice, resume, or unknown.
     def classify_document(self, text: str) -> Dict[str, Any]:
         prompt = f"Document Text:\n{text[:4000]}"
         raw = self._call_api(CLASSIFICATION_SYSTEM_PROMPT, prompt)
         return json.loads(clean_llm_json_response(raw))
 
+    # Plain-English: Prompts Gemini to extract structured fields conforming to the specified JSON schema.
     def extract_fields(
         self,
         text: str,
@@ -707,6 +741,8 @@ class GeminiLLMClient(BaseLLMClient):
         return clean_llm_json_response(raw)
 
 
+# Plain-English: A resilient wrapper client that prioritizes calling the real live LLM (OpenAI, Anthropic, or Gemini),
+# but automatically falls back to the offline heuristic extractor if no API key is provided or if an API call fails.
 class HybridLLMClient(BaseLLMClient):
     """
     Primary live LLM client with heuristic fallback.
@@ -739,6 +775,7 @@ class HybridLLMClient(BaseLLMClient):
     def model_name(self) -> str:
         return self._target_model
 
+    # Plain-English: Attempts to classify the document with the primary live LLM; falls back to the heuristic classifier on failure.
     def classify_document(self, text: str) -> Dict[str, Any]:
         if self.primary_client:
             try:
@@ -762,6 +799,7 @@ class HybridLLMClient(BaseLLMClient):
             self.last_fallback_reason = f"No API key configured for {self._target_provider.upper()}"
         return self.fallback_client.classify_document(text)
 
+    # Plain-English: Attempts to extract fields using the primary live LLM API; falls back to the heuristic extractor if an error occurs.
     def extract_fields(
         self,
         text: str,
@@ -807,6 +845,8 @@ class HybridLLMClient(BaseLLMClient):
         )
 
 
+# Plain-English: Factory function that reads application settings and environment variables
+# (API keys and chosen provider) to construct and return the configured LLM client instance.
 def get_llm_client() -> BaseLLMClient:
     """Factory function to provide the configured LLM client instance with live primary path and transparent fallback."""
     provider = settings.LLM_PROVIDER.lower()

@@ -334,6 +334,8 @@ def test_serve_frontend_dashboard(client):
         assert "uploadForm" in resp.text
         assert "docTypeFilter" in resp.text
         assert "/documents/search?summary=true" in resp.text
+        assert "deleteDocument" in resp.text
+        assert "Are you sure you want to delete this document?" in resp.text
 
 
 def _create_docx_bytes(text: str) -> bytes:
@@ -523,6 +525,58 @@ def test_e2e_billing_statement_real_pdf_upload(client, fixtures_path):
     assert structured["invoice_number"] == "SOL-88231"
     assert structured["amount"] == 3275.0
     assert structured["customer_name"] == "Meadowbrook Schools District"
+
+
+def test_delete_document_and_verify_search_removal(client, fixtures_path):
+    """Test deleting a document removes it from DB and search results, and returns 404 subsequently."""
+    # 1. Upload a document
+    pdf_path = fixtures_path / "sample_invoice.pdf"
+    with open(pdf_path, "rb") as f:
+        upload_resp = client.post(
+            "/documents",
+            files={"file": ("sample_invoice.pdf", f, "application/pdf")}
+        )
+    assert upload_resp.status_code == 201
+    doc_id = upload_resp.json()["id"]
+
+    # 2. Verify it exists via GET /documents/{id} and GET /documents/search
+    get_resp = client.get(f"/documents/{doc_id}")
+    assert get_resp.status_code == 200
+
+    search_resp = client.get("/documents/search", params={"summary": "true"})
+    assert search_resp.status_code == 200
+    found_ids = [d["id"] for d in search_resp.json()["results"]]
+    assert doc_id in found_ids
+
+    # 3. Delete the document via DELETE /documents/{id}
+    del_resp = client.delete(f"/documents/{doc_id}")
+    assert del_resp.status_code == 200
+    del_data = del_resp.json()
+    assert del_data["status"] == "success"
+    assert del_data["id"] == doc_id
+    assert f"Document '{doc_id}' successfully deleted." in del_data["message"]
+
+    # 4. Confirm document no longer exists (GET -> 404)
+    get_after = client.get(f"/documents/{doc_id}")
+    assert get_after.status_code == 404
+
+    # 5. Confirm document no longer appears in search results
+    search_after = client.get("/documents/search", params={"summary": "true"})
+    assert search_after.status_code == 200
+    found_after_ids = [d["id"] for d in search_after.json()["results"]]
+    assert doc_id not in found_after_ids
+
+    # 6. Attempting to delete again returns 404
+    del_again = client.delete(f"/documents/{doc_id}")
+    assert del_again.status_code == 404
+    assert f"Document with ID '{doc_id}' not found." in del_again.json()["detail"]
+
+
+def test_delete_nonexistent_document_returns_404(client):
+    """Test DELETE /documents/{id} with nonexistent ID returns 404."""
+    resp = client.delete("/documents/00000000-0000-0000-0000-000000000000")
+    assert resp.status_code == 404
+    assert "Document with ID '00000000-0000-0000-0000-000000000000' not found." in resp.json()["detail"]
 
 
 

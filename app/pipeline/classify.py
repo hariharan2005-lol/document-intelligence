@@ -14,6 +14,9 @@ logger = logging.getLogger(__name__)
 HEURISTIC_THRESHOLD = 0.35
 
 
+# Plain-English: A data container holding the classification outcome:
+# the decided document type (invoice, resume, or unknown), the confidence score (0.0 to 1.0),
+# the method used to decide ("heuristic", "llm", or "fallback"), and an explanation of why.
 @dataclass
 class ClassificationResult:
     doc_type: DocumentType
@@ -22,6 +25,10 @@ class ClassificationResult:
     reasoning: Optional[str] = None
 
 
+# Plain-English: Evaluates the text against keyword lists for invoices and resumes.
+# It checks how many signature keywords appear in the document (using whole-word matching
+# for single words and phrase matching for compound terms like "bill to") and calculates
+# a percentage match score for each document type.
 def score_heuristics(text: str) -> Dict[DocumentType, Tuple[int, float]]:
     """Calculate matched keyword count and density score for each registered document type."""
     text_lower = text.lower()
@@ -48,6 +55,12 @@ def score_heuristics(text: str) -> Dict[DocumentType, Tuple[int, float]]:
     return results
 
 
+# Plain-English: The decision maker that categorizes a document as invoice, resume, or unknown:
+# 1. If the text is empty, returns UNKNOWN immediately.
+# 2. Checks for definite title phrases (e.g. "billing statement", "commercial invoice") -> INVOICE.
+# 3. Tallies keyword counts; if a category has >= 2 strong matches and beats rivals, classifies via fast heuristics.
+# 4. If ambiguous (e.g. ties or low keyword counts), sends the text to the LLM for deep semantic reasoning.
+# 5. If the LLM is unreachable or fails, falls back to the best weak keyword match or marks as UNKNOWN.
 def classify_document_text(
     text: str,
     llm_client: Optional[BaseLLMClient] = None,

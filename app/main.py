@@ -13,7 +13,7 @@ from app.db.models import DocumentModel
 from app.db.session import get_db, init_db
 from app.pipeline.runner import run_pipeline
 from app.pipeline.validate import DocumentValidationError
-from app.schemas.common import DocumentResponse, DocumentSummaryResponse, DocumentSearchResult, DocumentType
+from app.schemas.common import DocumentResponse, DocumentSummaryResponse, DocumentSearchResult, DocumentDeleteResponse, DocumentType
 from app.ui import HTML_CONTENT
 
 # Setup logging
@@ -223,3 +223,26 @@ def get_document(document_id: str, db: Session = Depends(get_db)):
             detail=f"Document with ID '{document_id}' not found.",
         )
     return doc
+
+
+@app.delete(
+    "/documents/{document_id}",
+    response_model=DocumentDeleteResponse,
+    tags=["Documents"],
+    summary="Delete a document by ID",
+)
+def delete_document(document_id: str, db: Session = Depends(get_db)):
+    """Remove the specified document from the database and return confirmation (404 if not found)."""
+    doc = db.query(DocumentModel).filter(DocumentModel.id == document_id).first()
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document with ID '{document_id}' not found.",
+        )
+    db.delete(doc)
+    db.commit()
+    return DocumentDeleteResponse(
+        status="success",
+        message=f"Document '{document_id}' successfully deleted.",
+        id=document_id,
+    )

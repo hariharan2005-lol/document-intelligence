@@ -32,6 +32,10 @@ BOILERPLATE_PATTERNS = [
 ]
 
 
+# Plain-English: Normalizes special characters and symbols.
+# 1. Unpacks typographic ligatures where joined letters became a single character (e.g. 'ﬁ' -> 'fi', 'ﬂ' -> 'fl').
+# 2. Converts fancy curly "smart quotes" and em/en dashes into standard keyboard quotes (" and ') and hyphens (-).
+# 3. Applies Unicode NFKC normalization so accented letters and symbols have consistent internal representations.
 def normalize_unicode(text: str) -> str:
     """Normalize unicode characters and replace common ligatures and stylized quotes."""
     for char, replacement in LIGATURE_MAP.items():
@@ -39,6 +43,10 @@ def normalize_unicode(text: str) -> str:
     return unicodedata.normalize("NFKC", text)
 
 
+# Plain-English: Cleans up optical scanning glitches and visual noise produced by OCR.
+# 1. Deletes unreadable replacement characters ('\ufffd' or the '' symbol) from failed scans.
+# 2. Replaces excessively long runs of delimiter lines (e.g. "========" or "--------") with a clean "---".
+# 3. Drops isolated lines containing only stray punctuation noise (e.g. speckles like ". ," or ";") with no letters or numbers.
 def fix_ocr_artifacts(text: str) -> str:
     """Correct common OCR scanning noise and artifacts."""
     # Replace unicode replacement character
@@ -56,6 +64,9 @@ def fix_ocr_artifacts(text: str) -> str:
     return "\n".join(lines)
 
 
+# Plain-English: Detects and strips recurring non-content header and footer lines.
+# 1. Strips standalone page numbers in various formats (e.g. "Page 1 of 5", "- 2 -", "[ 3 ]", "4 / 10").
+# 2. Strips repetitive boilerplate phrases like "CONFIDENTIAL", "Confidential and Proprietary", and "All rights reserved".
 def strip_headers_footers(text: str) -> str:
     """Filter out repeating header/footer artifacts such as page numbers."""
     cleaned_lines = []
@@ -76,6 +87,11 @@ def strip_headers_footers(text: str) -> str:
     return "\n".join(cleaned_lines)
 
 
+# Plain-English: Cleans up spacing, tabs, and line breaks across the whole document.
+# 1. Standardizes Windows (\r\n) and legacy Mac (\r) line returns into Unix newlines (\n).
+# 2. Converts tabs and irregular Unicode spacing (like non-breaking spaces '\u00A0') into standard ASCII spaces.
+# 3. Collapses multiple consecutive spaces into a single space and trims whitespace from line edges.
+# 4. Reduces 3 or more blank lines down to 2, keeping clean paragraph spacing without giant empty gaps.
 def normalize_whitespace(text: str) -> str:
     """Collapse tabs and irregular spaces, trimming line ends, and limiting consecutive newlines."""
     # Replace carriage returns
@@ -92,6 +108,11 @@ def normalize_whitespace(text: str) -> str:
     return text.strip()
 
 
+# Plain-English: The master cleaning pipeline that orchestrates all 4 cleaning stages in order:
+# 1. Normalizes Unicode characters, ligatures, and quotes.
+# 2. Fixes OCR scanning glitches and speckle noise.
+# 3. Removes page numbers and boilerplate headers/footers.
+# 4. Standardizes spacing and paragraph line breaks.
 def clean_extracted_text(raw_text: str) -> str:
     """Run full cleaning pipeline on raw extracted text."""
     if not raw_text:

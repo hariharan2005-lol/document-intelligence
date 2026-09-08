@@ -7,6 +7,10 @@ from sqlalchemy.orm import declarative_base
 Base = declarative_base()
 
 
+# Plain-English: Defines the "documents" table structure in the SQLite database.
+# Using SQLAlchemy's ORM, it maps Python object properties directly to SQLite table columns.
+# It stores basic file info (name, format), classification (invoice/resume), cleaned text,
+# timestamps, and stores the extracted business fields directly as a queryable JSON column.
 class DocumentModel(Base):
     """Document record storing raw metadata, text, and extracted structured fields."""
     __tablename__ = "documents"

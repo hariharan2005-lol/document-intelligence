@@ -2,6 +2,9 @@
 from pydantic import BaseModel, Field
 
 
+# Plain-English: Defines the data blueprint (schema) for an invoice.
+# It ensures every extracted invoice contains a vendor name, invoice number,
+# billing date, customer name, total amount, and currency.
 class InvoiceData(BaseModel):
     """Structured fields extracted from an invoice, billing statement, or commercial invoice document."""
     company_name: str = Field(

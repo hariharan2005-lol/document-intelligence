@@ -13,6 +13,9 @@ from app.schemas.registry import DOCUMENT_REGISTRY
 logger = logging.getLogger(__name__)
 
 
+# Plain-English: A simple container that packages the outcome of the extraction process:
+# the extracted structured fields, whether they passed schema validation, how many retries
+# were needed, and any error message if something went wrong.
 @dataclass
 class ExtractionResult:
     structured_data: Optional[Dict[str, Any]]
@@ -21,6 +24,12 @@ class ExtractionResult:
     error_message: Optional[str] = None
 
 
+# Plain-English: The main engine for extracting structured data from cleaned text.
+# 1. Finds the right blueprint/schema based on document type (invoice or resume).
+# 2. Sends the text and expected JSON structure to the LLM.
+# 3. Validates the LLM's response against the Pydantic schema.
+# 4. If the first try fails, automatically asks the LLM to fix its mistake (1 retry).
+# 5. If the retry fails, falls back to a regex/heuristic extractor if enabled.
 def extract_structured_fields(
     text: str,
     doc_type: DocumentType,

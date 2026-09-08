@@ -206,6 +206,16 @@ HTML_CONTENT = """<!DOCTYPE html>
       margin-top: 4px;
     }
     .link-toggle:hover { text-decoration: underline; }
+
+    .link-danger {
+      color: var(--danger);
+      text-decoration: none;
+      font-size: 0.8rem;
+      cursor: pointer;
+      display: inline-block;
+      margin-top: 4px;
+    }
+    .link-danger:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -347,12 +357,35 @@ HTML_CONTENT = """<!DOCTYPE html>
             <td>${escapeHtml(amountVal)}</td>
             <td>${escapeHtml(currencyVal)}</td>
             <td>
-              <span class="link-toggle" onclick="toggleDetails('${detailsId}')">View JSON</span>
+              <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                <span class="link-toggle" onclick="toggleDetails('${detailsId}')">View JSON</span>
+                <span style="color: var(--border);">|</span>
+                <span class="link-danger" onclick="deleteDocument('${escapeHtml(doc.id)}')">Delete</span>
+              </div>
               <div id="${detailsId}" class="json-details" style="display: none;">${escapeHtml(JSON.stringify(fields, null, 2))}</div>
             </td>
           </tr>
         `;
       }).join("");
+    }
+
+    async function deleteDocument(docId) {
+      const confirmed = window.confirm("Are you sure you want to delete this document?");
+      if (!confirmed) return;
+
+      try {
+        const res = await fetch(`/documents/${encodeURIComponent(docId)}`, {
+          method: "DELETE",
+        });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || `HTTP ${res.status}: Failed to delete document`);
+        }
+        showStatus(`Document ${docId} successfully deleted.`, "success");
+        await loadDocuments();
+      } catch (err) {
+        showStatus(`Error deleting document: ${err.message}`, "error");
+      }
     }
 
     function toggleDetails(id) {
